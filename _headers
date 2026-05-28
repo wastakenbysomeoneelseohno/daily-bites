@@ -1,0 +1,14 @@
+/index.html
+  Cache-Control: no-store
+/data/manifest.json
+  Cache-Control: no-store
+/data/*.dat
+  Cache-Control: public, max-age=300
+/app-data/voice-manifest.json
+  Cache-Control: no-store
+/app-data/*.dat
+  Cache-Control: public, max-age=31536000, immutable
+/app-data/image-manifest.json
+  Cache-Control: no-store
+/app-data/img-*.dat
+  Cache-Control: public, max-age=31536000, immutable

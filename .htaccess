@@ -1,0 +1,8 @@
+<IfModule mod_headers.c>
+  <FilesMatch "\.dat$">
+    Header set Cache-Control "public, max-age=300"
+  </FilesMatch>
+  <FilesMatch "(index\.html|manifest\.json)$">
+    Header set Cache-Control "no-store"
+  </FilesMatch>
+</IfModule>

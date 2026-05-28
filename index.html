@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Daily Bread</title>
+<meta name="description" content="A daily Bible reading companion — plan, translations, commentaries, dictionary and maps.">
+<meta name="theme-color" content="#15100A">
+<meta name="application-name" content="Daily Bread">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Daily Bread">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Daily Bread">
+<meta property="og:description" content="A daily Bible reading companion — plan, translations, commentaries, dictionary and maps.">
+<meta property="og:image" content="icon-512.png">
+<meta name="twitter:card" content="summary">
+<style>
+  :root { color-scheme: dark light; }
+  html, body { margin: 0; height: 100%; background: #14110e; color: #e7ddca;
+    font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  .wrap { min-height: 100%; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+  .card { width: min(380px, 92vw); text-align: center; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; letter-spacing: .3px; }
+  .sub { color: #9c9079; font-size: .9rem; margin: 0 0 22px; }
+  .track { height: 6px; border-radius: 4px; background: #2a251d; overflow: hidden; }
+  .fill { height: 100%; width: 0; background: #c79a4b; transition: width .2s; }
+  .status { margin-top: 10px; color: #9c9079; font-size: .85rem; }
+  .gate { display: none; }
+  .gate.show { display: block; }
+  .row { display: flex; gap: 8px; margin: 8px 0; }
+  input { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #3a3328;
+    background: #1d1913; color: #e7ddca; font-size: 1rem; }
+  button { padding: 12px 16px; border-radius: 10px; border: 0; background: #c79a4b;
+    color: #20180c; font-weight: 600; font-size: 1rem; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .err { color: #e08a7a; min-height: 1.2em; font-size: .85rem; margin-top: 6px; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card">
+  <h1>Daily Bread</h1>
+  <p class="sub">Just a moment…</p>
+  <div id="prog">
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <div class="status" id="status">Checking…</div>
+  </div>
+  <form class="gate" id="gate" autocomplete="on">
+    <input type="text" id="who" name="username" autocomplete="username" value="Daily Bread" tabindex="-1" aria-hidden="true" style="position:absolute;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none">
+    <div class="row">
+      <input type="password" id="val" name="password" placeholder="Enter the required value" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button id="btn" type="submit">Continue</button>
+    </div>
+    <div class="err" id="msg"></div>
+  </form>
+</div></div>
+<script>
+// Loader: reads a small public manifest, fetches the library files it doesn't already have
+// (in parallel, kept briefly), prepares them once the required value is provided, saves the
+// result locally, then loads the app. Nothing sensitive is ever stored.
+const DB = 'dailybread_v3', DATA = 'data/';
+const $ = id => document.getElementById(id);
+const setStatus = (t, pct) => { $('status').textContent = t; if (pct != null) $('fill').style.width = pct + '%'; };
+
+// Local store: 'data' (NAME → ready object; '__APP_UI__' → app document) + 'parts' (file → bytes)
+let _db;
+function _open() { return _db ? Promise.resolve(_db) : new Promise((res, rej) => { const q = indexedDB.open(DB, 1); q.onupgradeneeded = () => { const d = q.result; if (!d.objectStoreNames.contains('data')) d.createObjectStore('data'); if (!d.objectStoreNames.contains('parts')) d.createObjectStore('parts'); }; q.onsuccess = () => { _db = q.result; res(_db); }; q.onerror = () => rej(q.error); }); }
+function _st(store, mode) { return _open().then(d => d.transaction(store, mode).objectStore(store)); }
+const idbGet = (s, k) => _st(s).then(o => new Promise((r, j) => { const t = o.get(k); t.onsuccess = () => r(t.result); t.onerror = () => j(t.error); }));
+const idbPut = (s, k, v) => _st(s, 'readwrite').then(o => new Promise((r, j) => { const t = o.put(v, k); t.onsuccess = () => r(); t.onerror = () => j(t.error); }));
+const idbDel = (s, k) => _st(s, 'readwrite').then(o => new Promise((r, j) => { const t = o.delete(k); t.onsuccess = () => r(); t.onerror = () => j(t.error); }));
+const idbKeys = s => _st(s).then(o => new Promise((r, j) => { const t = o.getAllKeys(); t.onsuccess = () => r(t.result); t.onerror = () => j(t.error); }));
+
+const fetchBytes = async u => new Uint8Array(await (await fetch(u, { cache: 'default' })).arrayBuffer());
+const td = new TextDecoder();
+async function inflate(u8) { return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()); }
+
+let PARAMS;
+async function makeKey(val) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(val), 'PBKDF2', false, ['deriveKey']);
+  const salt = Uint8Array.from(atob(PARAMS.salt), c => c.charCodeAt(0));
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: PARAMS.iter, hash: PARAMS.hash }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+}
+async function unpack(bytes, key) {                   // iv(12) || body || tag(16)
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, key, bytes.slice(12)));
+}
+async function join(files) {                           // stitch prepared parts → inflate → bytes
+  const parts = await Promise.all(files.map(f => idbGet('parts', f)));
+  let n = 0; for (const p of parts) n += p.length;
+  const buf = new Uint8Array(n); let o = 0; for (const p of parts) { buf.set(p, o); o += p.length; }
+  return inflate(buf);
+}
+
+function render(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  document.replaceChild(document.importNode(doc.documentElement, true), document.documentElement);
+  for (const s of [...document.querySelectorAll('script')]) {                   // re-run scripts (parsing doesn't)
+    const ns = document.createElement('script');
+    for (const a of s.attributes) ns.setAttribute(a.name, a.value);
+    ns.textContent = s.textContent;
+    s.parentNode.replaceChild(ns, s);
+  }
+  // Replacing the whole <html> doesn't make the browser re-read <link rel="icon">, so the tab
+  // drops the icon it had on the vault page and falls back to the default globe. Recreating the
+  // link isn't always enough — Chrome only re-reads it when the href changes — so append a tiny
+  // cache-busting query. (Same-origin file, allowed by CSP img-src 'self'.)
+  const bust = '?r=' + Date.now();
+  for (const l of [...document.querySelectorAll("link[rel~='icon'], link[rel='apple-touch-icon']")]) {
+    const n = document.createElement('link');
+    for (const a of l.attributes) n.setAttribute(a.name, a.value);
+    const href = l.getAttribute('href') || '';
+    n.setAttribute('href', href.split('?')[0] + bust);
+    l.remove();
+    document.head.appendChild(n);
+  }
+}
+
+// Hold fetched files briefly (5 min) so leaving the prompt and returning won't re-fetch.
+// Names are content hashes (immutable), so held bytes are always valid.
+const HOLD = 'v3-hold', TTL = 5 * 60 * 1000;
+async function clearHold() { try { await caches.delete(HOLD); } catch (_) {} localStorage.removeItem('v3_held_at'); }
+async function getMany(files) {
+  if (Date.now() - (+localStorage.getItem('v3_held_at') || 0) >= TTL) await clearHold();
+  const hold = await caches.open(HOLD);
+  let done = 0; const total = files.length || 1;
+  setStatus(`Loading ${files.length} file${files.length > 1 ? 's' : ''}…`, 0);
+  await Promise.all(files.map(async f => {                                       // parallel; reuse if held
+    if (!(await hold.match(DATA + f))) await hold.put(DATA + f, await fetch(DATA + f, { cache: 'default' }));
+    setStatus(`Loading ${++done}/${total}…`, Math.round(done / total * 100));
+  }));
+  localStorage.setItem('v3_held_at', String(Date.now()));
+}
+async function getBlob(f) { const c = await caches.open(HOLD); const r = await c.match(DATA + f); return new Uint8Array(await r.arrayBuffer()); }
+
+// Drop any cached part/section the manifest+config no longer reference — the client never
+// keeps data it doesn't need. (config gives the live section names; manifest the live parts.)
+async function prune(manifest, config) {
+  const liveParts = new Set(manifest.files);
+  for (const f of await idbKeys('parts')) if (!liveParts.has(f)) await idbDel('parts', f);
+  // A data key is live if it's the app UI, a (whole) domain, or a "<domain>/<book>" slice of
+  // a granular (split:'book') domain. Anything else is stale → drop it.
+  const split = config.split || {};
+  const live = k => {
+    if (k === '__APP_UI__' || (k in config.domains)) return true;
+    const i = k.indexOf('/'); if (i < 0) return false;
+    const dom = k.slice(0, i);
+    return split[dom] === 'book' && (dom in config.domains);
+  };
+  for (const k of await idbKeys('data')) if (!live(k)) await idbDel('data', k);
+}
+
+// Prepare the freshly-fetched files with a verified value; rebuild changed sections + the app.
+// Granular domains (config.split[name]==='book') are stored ONE BOOK PER KEY ("name/Book")
+// so the app reads a single book at a time instead of the whole commentary.
+async function apply(manifest, key, config, toGet) {
+  setStatus('Preparing…', 100);
+  for (const f of toGet) await idbPut('parts', f, await unpack(await getBlob(f), key));
+  setStatus('Setting things up…');
+  const split = config.split || {};
+  const prev = JSON.parse(localStorage.getItem('v3_sections') || '{}');
+  for (const [name, files] of Object.entries(config.domains)) {                  // only changed sections
+    if (JSON.stringify(files) === JSON.stringify(prev[name])) continue;
+    const obj = JSON.parse(td.decode(await join(files)));
+    if (split[name] === 'book') {
+      await idbDel('data', name);                                               // never a whole record for split domains
+      for (const k of await idbKeys('data')) if (k.startsWith(name + '/')) await idbDel('data', k);  // clear old books
+      for (const b of Object.keys(obj)) await idbPut('data', name + '/' + b, obj[b]);
+    } else {
+      await idbPut('data', name, obj);
+    }
+  }
+  if (JSON.stringify(config.appUi) !== JSON.stringify(prev.__appUi))
+    await idbPut('data', '__APP_UI__', td.decode(await join(config.appUi)));
+  await prune(manifest, config);                                                 // remove anything unreferenced
+  localStorage.setItem('v3_sections', JSON.stringify({ ...config.domains, __appUi: config.appUi }));
+  localStorage.setItem('v3_split', JSON.stringify(split));                       // fast-path prune needs this
+  localStorage.setItem('v3_ref', manifest.config);
+  await clearHold();
+}
+
+// Try a value end-to-end: returns true if it's right (and applies the update).
+// Returns 'ok' | 'wrong' (value didn't decrypt) | 'error:<message>' (storage/quota/etc.). The
+// decrypt is isolated from apply() so a SAVE failure is never misreported as a wrong value.
+async function unlockWith(manifest, toGet, v) {
+  let key, config;
+  try { key = await makeKey(v); config = JSON.parse(td.decode(await inflate(await unpack(await getBlob(manifest.config), key)))); }
+  catch (e) { return 'wrong'; }
+  try { await apply(manifest, key, config, toGet); return 'ok'; }
+  catch (e) { return 'error:' + (e && e.name === 'QuotaExceededError' ? 'Not enough storage space — free up space and reload.' : ('Storage error: ' + ((e && e.message) || e))); }
+}
+// The value is kept ONLY by the browser's own credential store (OS-protected, opt-in,
+// not readable by page script) — never by this app. HTTPS-only; no-ops where unsupported.
+async function recallValue() {
+  try { if (window.PasswordCredential && navigator.credentials) { const c = await navigator.credentials.get({ password: true, mediation: 'optional' }); if (c && c.password) return c.password; } } catch (_) {}
+  return null;
+}
+async function rememberValue(v) {
+  try { if (window.PasswordCredential && navigator.credentials) await navigator.credentials.store(new PasswordCredential({ id: location.host || 'daily-bread', name: 'Daily Bread', password: v })); } catch (_) {}
+}
+
+function askValue(manifest, toGet) {                                            // files already fetched
+  $('prog').classList.add('hide'); $('gate').classList.add('show'); $('val').focus();
+  return new Promise(resolve => {
+    $('gate').addEventListener('submit', async e => {
+      e.preventDefault();
+      const v = $('val').value; if (!v) return;
+      $('btn').disabled = true; $('msg').textContent = 'Working…';
+      const r = await unlockWith(manifest, toGet, v);
+      if (r === 'ok') { await rememberValue(v); resolve(); }                       // browser offers to save it
+      else if (r === 'wrong') { $('msg').textContent = 'That value didn’t work. Please try again.'; $('btn').disabled = false; $('val').select(); }
+      else { $('msg').textContent = r.slice(6); $('btn').disabled = false; }       // real storage error — don't blame the value
+    });
+  });
+}
+
+(async function boot() {
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (_) {}
+  let manifest;
+  try { manifest = JSON.parse(td.decode(await fetchBytes(DATA + 'manifest.json?v=' + Date.now()))); }
+  catch (e) { setStatus('Can’t reach the server. Check your connection and reload.'); return; }
+  PARAMS = manifest.kdf;
+  const cached = await idbGet('data', '__APP_UI__').catch(() => null);
+  // Already current → tidy any stray cached data (using the stored section map; no value
+  // needed), then load straight away.
+  if (cached && localStorage.getItem('v3_ref') === manifest.config) {
+    await clearHold();
+    const sec = JSON.parse(localStorage.getItem('v3_sections') || '{}');
+    const split = JSON.parse(localStorage.getItem('v3_split') || '{}');
+    const names = new Set(Object.keys(sec).filter(k => k !== '__appUi'));
+    const live = k => {
+      if (k === '__APP_UI__' || names.has(k)) return true;
+      const i = k.indexOf('/'); return i > 0 && split[k.slice(0, i)] === 'book' && names.has(k.slice(0, i));
+    };
+    for (const k of await idbKeys('data')) if (!live(k)) await idbDel('data', k);
+    const liveParts = new Set(manifest.files);
+    for (const f of await idbKeys('parts')) if (!liveParts.has(f)) await idbDel('parts', f);
+    render(cached); return;
+  }
+  // New or updated → work out what's missing, fetch it FIRST.
+  const have = new Set(await idbKeys('parts'));
+  const toGet = manifest.files.filter(f => !have.has(f));
+  await getMany([manifest.config, ...toGet]);
+  // If the browser has the value saved, try it silently — no prompt. Otherwise ask.
+  const saved = await recallValue();
+  if (!(saved && (await unlockWith(manifest, toGet, saved)) === 'ok')) await askValue(manifest, toGet);
+  render(await idbGet('data', '__APP_UI__'));
+})();
+</script>
+</body>
+</html>
